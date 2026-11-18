@@ -47,7 +47,21 @@ Tổng hợp từ `02_error_list_v1` (21 lỗi cửa vào trên 224 ảnh thô; 
   3. **Ảnh nền thật (`EMPTY_LABEL`) chưa được duyệt hết:** Trong 4 ảnh `EMPTY_LABEL` còn lại ở v3 (`img_0013`, `img_0097`, `img_0129`, `img_0192`), máy không thể tự phân biệt đó là ảnh không có đối tượng hay ảnh bị xóa mất toàn bộ box ở bước `autofix`[cite: 29, 30].
 
 ## 5. Train: raw vs clean (tùy chọn, chấm riêng)
-Chưa chạy (tập trung hoàn thiện và kiểm thử phần lõi của pipeline kiểm soát chất lượng nhãn trên máy cục bộ không có GPU).
+Thí nghiệm huấn luyện công bằng trên Google Colab (T4 GPU) với cùng kiến trúc **`yolo26n.pt`**, `20` epochs, `batch=16`, `imgsz=640`, cùng tập validation `gold_val` (40 ảnh) và đánh giá trên cùng tập `test` (100 ảnh) qua `2` seed (`0` và `1`):
+
+| biến thể | #ảnh train | số seed | map50 (TB ± độ lệch) | map50_95 (TB ± độ lệch) | precision (TB ± độ lệch) | recall (TB ± độ lệch) |
+|---|---|---|---|---|---|---|
+| raw | 224 | 2 | 0.726 ± 0.000 | 0.512 ± 0.004 | 0.764 ± 0.061 | 0.649 ± 0.028 |
+| clean | 203 | 2 | 0.699 ± 0.025 | 0.486 ± 0.013 | 0.796 ± 0.050 | 0.596 ± 0.049 |
+
+Chênh mAP50 (clean − raw) = **-0.027**.
+
+* **So sánh chênh lệch với độ nhiễu & kết luận trung thực:**
+  * Chênh lệch `mAP50 (clean − raw) = -0.027` (`0.6988` so với `0.7258`) xấp xỉ **độ lệch chuẩn giữa 2 seed của tập `clean` (`±0.0247` — trong đó `seed 0` đạt `0.6813` còn `seed 1` đạt `0.7163`)**.
+  * Do đó, **không thể kết luận `clean` tốt hơn `raw` trên thang đo mAP50 tổng thể** (mức chênh nằm sát biên độ dao động ngẫu nhiên giữa các seed và theo hướng giảm); tuy nhiên `clean` giúp cải thiện **Precision trung bình từ `0.764` lên `0.796` (+0.032)** nhờ làm sạch nhãn nhiễu, đánh đổi bằng việc **Recall giảm từ `0.649` xuống `0.596`**.
+* **Giả thuyết giải thích & cách kiểm chứng:**
+  1. **Rò rỉ dữ liệu test (`LEAK_TEST`) tạo "metric đẹp giả" cho `raw`:** Bước `intake` phát hiện và loại bỏ **5 ảnh trong `raw` trùng trực tiếp với tập `test`** (`img_0049`, `img_0101`, `img_0167`, `img_0174`, `img_0221`). Khi huấn luyện trên `raw`, model học thuộc lòng 5 ảnh này nên điểm trên `test` bị thổi phồng giả tạo, trong khi `clean` đã loại bỏ rò rỉ nên phản ánh đúng năng lực tổng quát hóa thực tế. *Cách kiểm chứng:* Đánh giá lại cả hai model trên 95 ảnh `test` còn lại sau khi loại 5 ảnh bị rò rỉ.
+  2. **Lớp `truck` ít mẫu & dataset `clean` vẫn đang ở trạng thái `HOLD`:** Số ảnh train của `clean` giảm từ 224 xuống 203 ảnh (mất 21 ảnh), và vẫn còn **38/203 ảnh chưa qua người duyệt** (gồm 13 cảnh báo `POSSIBLE_MISSING` và 20 `POSSIBLE_LOOSE_BOX`). Sự thiếu hụt mẫu thể hiện rõ nhất ở lớp ít dữ liệu là **`truck`** (`AP50` của `clean` giảm từ `0.648` ở `raw` xuống `0.536`, kéo tụt Recall chung). *Cách kiểm chứng:* Duyệt nốt 38 ảnh còn cảnh báo để đạt chuẩn `Release`, bổ sung thêm dữ liệu lớp `truck`, và train với nhiều seed hơn (`3–5` seed) ở 50 epochs để giảm phương sai.
 
 ## 6. Quyết định và ghi chú AI
 * **(a) Quyết định cuối & điều kiện chuyển sang Release:** Chấp nhận kết luận **`HOLD`** (`18,72%` ảnh còn cảnh báo chưa duyệt, vượt ngưỡng `10,00%`)[cite: 25]. Để lô dữ liệu đạt **`Release`**, cần bổ sung ngân sách duyệt thêm tối thiểu **18 ảnh** ưu tiên cao nhất trong số 38 ảnh còn cảnh báo (đưa số ảnh chưa duyệt xuống còn `<= 20/203` ảnh, tức `<= 9,85% < 10,00%`)[cite: 25].
